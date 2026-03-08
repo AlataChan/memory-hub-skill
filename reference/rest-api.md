@@ -1,158 +1,141 @@
-# Memory Hub REST API Reference
+# Cherry API & Local File I/O Reference
 
-All endpoints are at `http://127.0.0.1:43123`. Always use `--noproxy '*'` on systems with HTTP proxy configured.
+Memory operations use local file I/O (jq). Agent management uses Cherry API at `http://127.0.0.1:23333`.
+Always use `--noproxy '*'` for curl commands (system has HTTP proxy).
 
 ---
 
-## Cherry Bridge Endpoints
+## Memory File Operations (local)
+
+Memory file: `~/.cherrystudio/memory-hub/memory-hub.json`
 
 ### Write a Fact (semantic memory)
 
 ```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/memories/fact \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentId": "agent_1772907543062_a6jc4lkaj",
-    "title": "Short fact title",
-    "text": "Detailed fact content",
-    "tags": ["tag1", "tag2"],
-    "importance": 0.8
-  }'
+ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+NOW=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+
+jq --arg id "$ID" --arg now "$NOW" \
+  --arg title "Short fact title" --arg text "Detailed fact content" \
+  '.entries += [{
+    "id": $id, "layer": "semantic",
+    "namespace": "cherry/agent/agent_1772907543062_a6jc4lkaj",
+    "title": $title, "text": $text,
+    "tags": ["from-claude-code"], "importance": 0.8,
+    "pinned": false, "archived": false,
+    "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now
+  }]' ~/.cherrystudio/memory-hub/memory-hub.json > /tmp/memory-hub-tmp.json && \
+mv /tmp/memory-hub-tmp.json ~/.cherrystudio/memory-hub/memory-hub.json
 ```
 
 ### Write a Resource (operational reference)
 
-```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/memories/resource \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentId": "agent_1772907543062_a6jc4lkaj",
-    "title": "Resource title",
-    "text": "File path, command, or endpoint",
-    "tags": ["paths"],
-    "importance": 0.7
-  }'
-```
+Same as fact, but with `"layer": "resource"` and namespace `cherry/agent/<id>/resource`.
 
 ### Write an Event (episodic memory)
 
-```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/memories/event \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentId": "agent_1772907543062_a6jc4lkaj",
-    "sessionId": "session_1772907543080_kglcx20le",
-    "title": "Event title",
-    "text": "What happened and why it matters",
-    "tags": ["debugging"],
-    "importance": 0.6
-  }'
-```
+Same as fact, but with `"layer": "episodic"` and namespace `cherry/agent/<id>/session/<session_id>`.
 
-### Load Handoff Context (resume)
+### Read All Memories (resume context)
 
 ```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/handoff/context \
-  -H "Content-Type: application/json" \
-  -d '{"agentId": "agent_1772907543062_a6jc4lkaj"}'
+jq '{
+  latest: [.entries[] | select(.layer == "workspace_snapshot" and .namespace == "cherry/agent/agent_1772907543062_a6jc4lkaj/latest")] | last,
+  facts: [.entries[] | select(.layer == "semantic" and (.namespace | startswith("cherry/agent/agent_1772907543062_a6jc4lkaj")))],
+  resources: [.entries[] | select(.layer == "resource" and (.namespace | startswith("cherry/agent/agent_1772907543062_a6jc4lkaj")))],
+  events: [.entries[] | select(.layer == "episodic" and (.namespace | startswith("cherry/agent/agent_1772907543062_a6jc4lkaj")))]
+}' ~/.cherrystudio/memory-hub/memory-hub.json
 ```
-
-Response includes: `latest` (snapshot), `semantic`, `resource`, `episodic` (categorized memories).
-
-### Save Handoff Snapshot
-
-```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/handoff/snapshot \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agentId": "agent_1772907543062_a6jc4lkaj",
-    "sessionId": "session_1772907543080_kglcx20le",
-    "source": "claude-external",
-    "goal": "Current user goal",
-    "status": "Progress summary",
-    "answerSummary": "Key result or answer",
-    "decisions": ["Confirmed decision 1"],
-    "facts": ["Durable fact discovered"],
-    "resources": ["/important/file/path"],
-    "openQuestions": ["Unresolved question"],
-    "nextSteps": ["What should happen next"]
-  }'
-```
-
-### Ensure Agent (bootstrap)
-
-```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/agents/ensure \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Agent Name",
-    "model": "cherryin:anthropic/claude-sonnet-4.6",
-    "workspacePath": "/path/to/project",
-    "description": "Optional description"
-  }'
-```
-
-### Check Cherry Bridge Status
-
-```bash
-curl -s --noproxy '*' http://127.0.0.1:43123/v1/cherry/status
-```
-
----
-
-## Base Memory Endpoints
 
 ### Search Memories
 
 ```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/search \
+jq --arg q "search text" \
+  '[.entries[] | select((.title + " " + .text) | test($q; "i"))] | .[] | {title, layer, importance, text: .text[:100]}' \
+  ~/.cherrystudio/memory-hub/memory-hub.json
+```
+
+### Save Handoff Snapshot
+
+```bash
+ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+NOW=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+AGENT="agent_1772907543062_a6jc4lkaj"
+SESSION="session_1772907543080_kglcx20le"
+
+SNAPSHOT='{"goal":"<GOAL>","status":"<STATUS>","decisions":["<D>"],"next_steps":["<NS>"],"updated_at":"'$NOW'"}'
+
+jq --arg id "$ID" --arg now "$NOW" --arg text "$SNAPSHOT" \
+  --arg sns "cherry/agent/$AGENT/session/$SESSION" \
+  --arg lns "cherry/agent/$AGENT/latest" \
+  '
+  .entries = [.entries[] | select(.namespace != $lns)] |
+  .entries += [
+    {"id": $id, "layer": "workspace_snapshot", "namespace": $sns,
+     "title": "handoff snapshot", "text": $text,
+     "tags": ["kind:snapshot","source:claude-external"],
+     "importance": 0.7, "pinned": false, "archived": false,
+     "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now},
+    {"id": ($id + "-latest"), "layer": "workspace_snapshot", "namespace": $lns,
+     "title": "handoff snapshot", "text": $text,
+     "tags": ["kind:snapshot","source:claude-external"],
+     "importance": 0.7, "pinned": false, "archived": false,
+     "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now}
+  ]' ~/.cherrystudio/memory-hub/memory-hub.json > /tmp/memory-hub-tmp.json && \
+mv /tmp/memory-hub-tmp.json ~/.cherrystudio/memory-hub/memory-hub.json
+```
+
+### Delete Entry
+
+```bash
+jq --arg id "<ENTRY_ID>" '.entries = [.entries[] | select(.id != $id)]' \
+  ~/.cherrystudio/memory-hub/memory-hub.json > /tmp/memory-hub-tmp.json && \
+mv /tmp/memory-hub-tmp.json ~/.cherrystudio/memory-hub/memory-hub.json
+```
+
+### Initialize Memory File
+
+```bash
+mkdir -p ~/.cherrystudio/memory-hub
+echo '{"version":1,"entries":[]}' > ~/.cherrystudio/memory-hub/memory-hub.json
+```
+
+---
+
+## Cherry Studio API Endpoints (port 23333)
+
+These require the Cherry Studio API server to be enabled (Settings > API Server).
+
+### List Agents
+
+```bash
+curl -s --noproxy '*' http://127.0.0.1:23333/v1/agents \
+  -H "Authorization: Bearer cs-sk-f995f423-d32a-455e-b49f-66f288f60b12"
+```
+
+### Create Agent
+
+```bash
+curl -s --noproxy '*' -X POST http://127.0.0.1:23333/v1/agents \
+  -H "Authorization: Bearer cs-sk-f995f423-d32a-455e-b49f-66f288f60b12" \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "search text",
-    "limit": 10,
-    "layer": ["semantic", "resource"],
-    "tags": ["optional-tag"]
-  }'
+  -d '{"name": "Agent Name", "model": "cherryin:anthropic/claude-sonnet-4.6"}'
 ```
 
-### Write Memory (low-level)
+### List Models
 
 ```bash
-curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/memories \
-  -H "Content-Type: application/json" \
-  -d '{
-    "layer": "semantic",
-    "namespace": "cherry/agent/agent_xxx",
-    "title": "Title",
-    "text": "Content",
-    "tags": ["tag1"],
-    "importance": 0.7
-  }'
-```
-
-### Get Entry by ID
-
-```bash
-curl -s --noproxy '*' http://127.0.0.1:43123/v1/resources/entries/<entry-id>
-```
-
-### Health Check
-
-```bash
-curl -s --noproxy '*' http://127.0.0.1:43123/health
-```
-
-### Runtime Status
-
-```bash
-curl -s --noproxy '*' http://127.0.0.1:43123/v1/status
+curl -s --noproxy '*' http://127.0.0.1:23333/v1/models \
+  -H "Authorization: Bearer cs-sk-f995f423-d32a-455e-b49f-66f288f60b12"
 ```
 
 ---
 
 ## Notes
 
-- All POST endpoints return `{"success": true, "data": ...}` on success
-- The `--noproxy '*'` flag is required because the system has `http_proxy=127.0.0.1:7897`
-- Use `-s` flag to suppress curl progress output
-- Pipe through `| jq .` for pretty-printed output (optional)
+- Memory operations are pure local file I/O — no server process needed
+- Agent management requires Cherry API at :23333
+- Use `--noproxy '*'` for all curl commands (system has `http_proxy=127.0.0.1:7897`)
+- Use `/tmp/memory-hub-tmp.json` as temp file for atomic writes
+- Use `uuidgen | tr '[:upper:]' '[:lower:]'` for entry IDs
+- Use `date -u +"%Y-%m-%dT%H:%M:%S.000Z"` for timestamps
