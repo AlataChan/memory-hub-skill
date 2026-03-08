@@ -132,27 +132,28 @@ SESSION="session_1772907543080_kglcx20le"
 
 SNAPSHOT='{"goal":"<GOAL>","status":"<STATUS>","decisions":[<DECISIONS>],"next_steps":[<NEXT_STEPS>],"updated_at":"'$NOW'"}'
 
-jq --arg id "$ID" --arg now "$NOW" --arg text "$SNAPSHOT" \
+# Write jq filter to temp file (avoids != shell escaping issue)
+cat > /tmp/handoff-filter.jq << 'JQEOF'
+.entries = [.entries[] | select(.namespace != $lns)] |
+.entries += [
+  {"id": $id, "layer": "workspace_snapshot", "namespace": $sns,
+   "title": "handoff snapshot", "text": $text,
+   "tags": ["kind:snapshot","source:claude-external"],
+   "importance": 0.7, "pinned": false, "archived": false,
+   "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now},
+  {"id": ($id + "-latest"), "layer": "workspace_snapshot", "namespace": $lns,
+   "title": "handoff snapshot", "text": $text,
+   "tags": ["kind:snapshot","source:claude-external"],
+   "importance": 0.7, "pinned": false, "archived": false,
+   "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now}
+]
+JQEOF
+
+jq --from-file /tmp/handoff-filter.jq \
+  --arg id "$ID" --arg now "$NOW" --arg text "$SNAPSHOT" \
   --arg sns "cherry/agent/$AGENT/session/$SESSION" \
   --arg lns "cherry/agent/$AGENT/latest" \
-  '
-  .entries = [.entries[] | select(.namespace != $lns)] |
-  .entries += [
-    {
-      "id": $id, "layer": "workspace_snapshot", "namespace": $sns,
-      "title": "handoff snapshot", "text": $text,
-      "tags": ["kind:snapshot","source:claude-external"],
-      "importance": 0.7, "pinned": false, "archived": false,
-      "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now
-    },
-    {
-      "id": ($id + "-latest"), "layer": "workspace_snapshot", "namespace": $lns,
-      "title": "handoff snapshot", "text": $text,
-      "tags": ["kind:snapshot","source:claude-external"],
-      "importance": 0.7, "pinned": false, "archived": false,
-      "createdAt": $now, "updatedAt": $now, "lastAccessedAt": $now
-    }
-  ]' ~/.cherrystudio/memory-hub/memory-hub.json > /tmp/memory-hub-tmp.json && \
+  ~/.cherrystudio/memory-hub/memory-hub.json > /tmp/memory-hub-tmp.json && \
 mv /tmp/memory-hub-tmp.json ~/.cherrystudio/memory-hub/memory-hub.json
 ```
 
