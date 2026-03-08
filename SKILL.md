@@ -15,38 +15,29 @@ Cherry Claude Memory Handoff Design.
 
 ## Quick Reference
 
-| Category | Tools |
-|----------|-------|
-| Memory Hub (base) | `memory_write`, `memory_search`, `memory_update`, `memory_delete`, `memory_pin`, `workspace_snapshot_save`, `workspace_snapshot_get`, `memory_status` |
-| Cherry Bridge | `ensure_cherry_agent`, `get_or_create_cherry_session`, `get_session_locator`, `load_handoff_context`, `save_handoff_snapshot`, `remember_fact`, `remember_resource`, `remember_event` |
-| Agent Built-in | `Bash`, `Edit`, `Write`, `Read`, `Glob`, `Grep`, `MultiEdit`, `NotebookEdit`, `NotebookRead`, `Task`, `TodoWrite`, `WebFetch`, `WebSearch` |
+| Category | Interface | Description |
+|----------|-----------|-------------|
+| Memory Hub REST API | `curl http://127.0.0.1:43123/v1/...` | Primary interface — reliable, works everywhere |
+| Memory Hub MCP | `memory_write`, `memory_search`, etc. | Alternative — may not be available in all environments |
+| Cherry Bridge REST | `curl http://127.0.0.1:43123/v1/cherry/...` | Agent management and categorized memory writes |
 
-Detailed parameter reference for each tool is in `reference/`.
+> **Transport Note**: Cherry Studio's MCP proxy has a known session caching bug that
+> prevents external MCP servers from working reliably. Always prefer REST API calls
+> via `Bash` + `curl`. See `reference/rest-api.md` for complete curl templates.
 
 ---
 
 ## Configuration Constants
 
 ```yaml
+agent_id: agent_1772907543062_a6jc4lkaj
+session_id: session_1772907543080_kglcx20le
 model: cherryin:anthropic/claude-sonnet-4.6
-agent_type: claude-code
-permission_mode: bypassPermissions
-default_mcp_servers:
-  - "@cherry/browser"
-  - "@cherry/fetch"
-  - "@cherry/memory"
 memory_hub_base: http://127.0.0.1:43123
 cherry_api_base: http://127.0.0.1:23333
-memory_mcp_server_id: <your-mcp-server-id>
+cherry_api_key: cs-sk-f995f423-d32a-455e-b49f-66f288f60b12
+memory_mcp_server_id: qhbCTgu1o7zIudmReObsF
 ```
-
-When calling `ensure_cherry_agent`, always use `model: "cherryin:anthropic/claude-sonnet-4.6"`
-unless the user explicitly requests a different model.
-
-The bridge automatically applies these defaults:
-- **Permission mode**: `bypassPermissions` (全自动模式) — agents work autonomously without confirmations
-- **MCP servers**: `@cherry/browser`, `@cherry/fetch`, `@cherry/memory` plus the memory-hub MCP server
-- These can be overridden via `configuration` and `mcpServerIds` parameters
 
 ---
 
@@ -55,25 +46,25 @@ The bridge automatically applies these defaults:
 ```
   [1. Bootstrap]  -->  [2. Resume]  -->  [3. Work]  -->  [4. Handoff]
        |                   |                |                |
-  ensure_agent        load_handoff     remember_*      save_snapshot
-  get_session         context          memory_write
+  ensure_agent        load_context     remember_*      save_snapshot
+  (REST API)          (REST API)       (REST API)      (REST API)
 ```
 
 ### Phase 1: Bootstrap (first time only)
 
 Trigger: user asks to create a Cherry agent, or no agent exists yet.
 
-1. Call `ensure_cherry_agent` with:
-   - `name`: descriptive agent name (e.g., "Cherry Studio Dev Agent")
-   - `model`: `"cherryin:anthropic/claude-sonnet-4.6"`
-   - `workspacePath`: the project directory the agent will work in
-   - `description`: optional, what this agent does
-2. The bridge automatically:
-   - Creates the agent (type: claude-code) with `bypassPermissions` mode
-   - Patches in memory-hub MCP server plus `@cherry/browser`, `@cherry/fetch`, `@cherry/memory`
-   - Injects handoff prompt appendix into instructions
-   - Creates a default session with matching config
-3. Store the returned `agent.id` and `session.id` for subsequent calls.
+```bash
+curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/agents/ensure \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Cherry Studio Dev Agent",
+    "model": "cherryin:anthropic/claude-sonnet-4.6",
+    "workspacePath": "/Users/apple/cherry-studio"
+  }'
+```
+
+Store the returned `agent.id` and `session.id` for subsequent calls.
 
 See: `workflows/agent-bootstrap.md`
 
@@ -81,53 +72,52 @@ See: `workflows/agent-bootstrap.md`
 
 Trigger: beginning of any conversation that involves an existing Cherry agent.
 
-1. Call `load_handoff_context` with `agentId` (and optionally `sessionId`).
-2. Read the returned:
-   - `latest` — most recent handoff snapshot (goal, status, decisions, etc.)
-   - `semantic` — durable facts and preferences
-   - `resource` — file paths, commands, endpoints
-   - `episodic` — notable events and workarounds
-3. Use this context to resume work without asking the user to repeat themselves.
+```bash
+curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/handoff/context \
+  -H "Content-Type: application/json" \
+  -d '{"agentId": "agent_1772907543062_a6jc4lkaj"}'
+```
+
+Process the response:
+1. `latest.snapshot` — high-level state (goal, status, decisions)
+2. `semantic.items` — durable facts and preferences
+3. `resource.items` — file paths, commands, endpoints
+4. `episodic.items` — notable events and workarounds
 
 See: `workflows/handoff-lifecycle.md`
 
 ### Phase 3: Work (during execution)
 
-Trigger: any meaningful work product, discovery, or decision during the session.
-
 Write memories as they happen — do not batch them:
 
-| What happened | Tool to call | Layer |
-|---------------|-------------|-------|
-| Confirmed a technical decision | `remember_fact` | semantic |
-| Discovered a user preference | `remember_fact` | semantic |
-| Found an important file path | `remember_resource` | resource |
-| Noted a useful command | `remember_resource` | resource |
-| Encountered a failure/workaround | `remember_event` | episodic |
-| Environment anomaly | `remember_event` | episodic |
+| What happened | REST endpoint | Layer |
+|---------------|--------------|-------|
+| Confirmed a technical decision | `POST /v1/cherry/memories/fact` | semantic |
+| Discovered a user preference | `POST /v1/cherry/memories/fact` | semantic |
+| Found an important file path | `POST /v1/cherry/memories/resource` | resource |
+| Noted a useful command | `POST /v1/cherry/memories/resource` | resource |
+| Encountered a failure/workaround | `POST /v1/cherry/memories/event` | episodic |
+| Environment anomaly | `POST /v1/cherry/memories/event` | episodic |
 
 See: `workflows/memory-strategy.md`
 
 ### Phase 4: Handoff (end of session or task boundary)
 
-Trigger: any of these conditions:
-- Task is complete or a meaningful milestone is reached
-- About to switch to a different task
-- User explicitly requests handoff
-- Session is ending
-- Before context compaction (if applicable)
+Trigger: task complete, context switch, user requests, or session ending.
 
-1. Call `save_handoff_snapshot` with:
-   - `agentId`, `sessionId`, `source`: `"claude-external"` (or `"cherry"` if from Cherry agent)
-   - `goal`: current user goal
-   - `status`: progress summary
-   - `answerSummary`: latest useful answer
-   - `decisions`: list of confirmed decisions
-   - `facts`: durable facts
-   - `resources`: useful file paths, commands, endpoints
-   - `openQuestions`: unresolved issues
-   - `nextSteps`: recommended next actions
-2. The bridge writes to both `cherry/agent/<id>/latest` and `cherry/agent/<id>/session/<sid>`.
+```bash
+curl -s --noproxy '*' -X POST http://127.0.0.1:43123/v1/cherry/handoff/snapshot \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "agent_1772907543062_a6jc4lkaj",
+    "sessionId": "session_1772907543080_kglcx20le",
+    "source": "claude-external",
+    "goal": "<current goal>",
+    "status": "<progress summary>",
+    "decisions": ["<confirmed decisions>"],
+    "nextSteps": ["<what should happen next>"]
+  }'
+```
 
 See: `workflows/handoff-lifecycle.md`
 
@@ -135,32 +125,20 @@ See: `workflows/handoff-lifecycle.md`
 
 ## Decision Trees
 
-### "Should I create an agent or reuse one?"
-
-```
-Has the user provided an agent_id?
-  YES --> Call ensure_cherry_agent with agentId (reuse)
-  NO  --> Does an agent with the requested name exist?
-          YES --> Bridge auto-reuses it
-          NO  --> Bridge auto-creates it
-```
-
-`ensure_cherry_agent` handles both cases — just always call it.
-
 ### "What layer should this memory go to?"
 
 ```
 Is this stable across sessions? (preferences, decisions, constraints)
-  YES --> remember_fact (semantic)
+  YES --> POST /v1/cherry/memories/fact (semantic)
 
-Is this a reusable reference? (file path, command, port, endpoint, convention)
-  YES --> remember_resource (resource)
+Is this a reusable reference? (file path, command, port, endpoint)
+  YES --> POST /v1/cherry/memories/resource (resource)
 
-Is this a notable event? (failure, workaround, anomaly, debugging insight)
-  YES --> remember_event (episodic)
+Is this a notable event? (failure, workaround, anomaly)
+  YES --> POST /v1/cherry/memories/event (episodic)
 
 Is this a full session state summary?
-  YES --> save_handoff_snapshot (workspace_snapshot)
+  YES --> POST /v1/cherry/handoff/snapshot (workspace_snapshot)
 ```
 
 ### "Should I save a snapshot now?"
@@ -187,8 +165,6 @@ Am I just mid-thought with no conclusion?   --> NO, wait
 
 ## Namespace Protocol
 
-All namespaces follow this pattern:
-
 | Namespace | Purpose |
 |-----------|---------|
 | `cherry/agent/<agent_id>` | Long-lived semantic memory |
@@ -196,7 +172,17 @@ All namespaces follow this pattern:
 | `cherry/agent/<agent_id>/session/<session_id>` | Per-session rolling snapshot |
 | `cherry/agent/<agent_id>/latest` | Most recent handoff snapshot (fast resume) |
 
-The bridge constructs these automatically — you do not need to build them manually.
+The bridge constructs these automatically.
+
+---
+
+## Known Issues
+
+| Issue | Impact | Workaround |
+|-------|--------|------------|
+| Cherry MCP proxy caches stateful `Server` objects | MCP tools unavailable to agents after first session | Use REST API via `Bash` + `curl --noproxy '*'` |
+| System HTTP proxy at `127.0.0.1:7897` | curl to localhost gets 502 errors | Always use `--noproxy '*'` flag |
+| Claude Code MCP URL transport | memory-hub MCP tools may not load | Use REST API or `claude-mem` plugin for search |
 
 ---
 
@@ -204,11 +190,10 @@ The bridge constructs these automatically — you do not need to build them manu
 
 | Error | Cause | Action |
 |-------|-------|--------|
-| `MCP server not found` | memory-hub not registered in Cherry UI | Ask user to check Cherry Settings > MCP Servers |
-| `Validation failed` | Missing required field (usually `model`) | Ensure `model` uses `provider:model_id` format |
 | `cherry_bridge_disabled` | memory-hub started without `CHERRY_*` env vars | Restart memory-hub with Cherry Bridge env vars |
 | `Connection refused` on :43123 | memory-hub not running | `launchctl start com.cherrystudio.memory-hub` |
 | `Connection refused` on :23333 | Cherry API server not enabled | Enable in Cherry Settings > API Server |
+| curl returns `502` | HTTP proxy intercepting localhost | Add `--noproxy '*'` to curl command |
 
 ---
 
@@ -218,11 +203,14 @@ The bridge constructs these automatically — you do not need to build them manu
 mcp_skill/
   SKILL.md                              <-- You are here
   reference/
-    memory-hub-tools.md                 <-- 8 base MCP tools (params, examples)
-    cherry-bridge-tools.md              <-- 8 Cherry Bridge tools (params, examples)
-    builtin-tools.md                    <-- 13 built-in agent tools
+    rest-api.md                         <-- REST API curl templates (primary)
+    cherry-bridge-tools.md              <-- Cherry Bridge MCP tools (reference)
+    memory-hub-tools.md                 <-- Base MCP tools (reference)
+    builtin-tools.md                    <-- Built-in agent tools
   workflows/
     agent-bootstrap.md                  <-- Step-by-step agent creation
     handoff-lifecycle.md                <-- Load/save handoff workflow
     memory-strategy.md                  <-- Memory classification rules
+  templates/
+    cherry-agent-prompt.md              <-- Precise prompt template for Cherry agents
 ```
