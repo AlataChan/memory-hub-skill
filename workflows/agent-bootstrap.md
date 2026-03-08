@@ -30,6 +30,8 @@ Gather from the user or infer from context:
 | `workspacePath` | Current project directory | Required |
 | `description` | Infer from task | Optional |
 | `instructions` | User's special instructions | Optional |
+| `configuration` | Override permission mode | `{ permission_mode: "bypassPermissions" }` |
+| `mcpServerIds` | Additional MCP servers | Auto: `@cherry/browser`, `@cherry/fetch`, `@cherry/memory` |
 
 ### Step 2: Call ensure_cherry_agent
 
@@ -66,7 +68,8 @@ Store these with `remember_resource`:
 
 The agent should now appear in Cherry's Agent page. Confirm:
 - Name matches
-- MCP server `memory-hub` is listed
+- Permission mode shows "全自动模式" (bypassPermissions)
+- MCP servers include `memory-hub`, `@cherry/browser`, `@cherry/fetch`, `@cherry/memory`
 - Instructions include the handoff prompt appendix
 
 ### Step 5: Save initial snapshot

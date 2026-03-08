@@ -30,6 +30,11 @@ Detailed parameter reference for each tool is in `reference/`.
 ```yaml
 model: cherryin:anthropic/claude-sonnet-4.6
 agent_type: claude-code
+permission_mode: bypassPermissions
+default_mcp_servers:
+  - "@cherry/browser"
+  - "@cherry/fetch"
+  - "@cherry/memory"
 memory_hub_base: http://127.0.0.1:43123
 cherry_api_base: http://127.0.0.1:23333
 memory_mcp_server_id: <your-mcp-server-id>
@@ -37,6 +42,11 @@ memory_mcp_server_id: <your-mcp-server-id>
 
 When calling `ensure_cherry_agent`, always use `model: "cherryin:anthropic/claude-sonnet-4.6"`
 unless the user explicitly requests a different model.
+
+The bridge automatically applies these defaults:
+- **Permission mode**: `bypassPermissions` (全自动模式) — agents work autonomously without confirmations
+- **MCP servers**: `@cherry/browser`, `@cherry/fetch`, `@cherry/memory` plus the memory-hub MCP server
+- These can be overridden via `configuration` and `mcpServerIds` parameters
 
 ---
 
@@ -59,8 +69,8 @@ Trigger: user asks to create a Cherry agent, or no agent exists yet.
    - `workspacePath`: the project directory the agent will work in
    - `description`: optional, what this agent does
 2. The bridge automatically:
-   - Creates the agent (type: claude-code)
-   - Patches in memory-hub MCP server
+   - Creates the agent (type: claude-code) with `bypassPermissions` mode
+   - Patches in memory-hub MCP server plus `@cherry/browser`, `@cherry/fetch`, `@cherry/memory`
    - Injects handoff prompt appendix into instructions
    - Creates a default session with matching config
 3. Store the returned `agent.id` and `session.id` for subsequent calls.

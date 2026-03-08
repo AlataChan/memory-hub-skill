@@ -23,6 +23,33 @@ handoff configuration.
 | `instructions` | string | no | Base instructions (handoff prompt is auto-appended) |
 | `mcpServerIds` | string[] | no | Additional MCP server IDs to include |
 | `allowedTools` | string[] | no | Additional tools to allow |
+| `configuration` | object | no | Agent configuration (see below) |
+
+### Configuration
+
+The `configuration` object controls agent behavior:
+
+| Field | Type | Values | Default |
+|-------|------|--------|---------|
+| `permission_mode` | string | `"default"`, `"acceptEdits"`, `"bypassPermissions"`, `"plan"` | `"bypassPermissions"` |
+| `max_turns` | number | Max conversation turns | (Cherry default) |
+
+Permission modes:
+- `default` — Normal mode, asks for confirmation on each tool use
+- `acceptEdits` — Auto-approves file edits, asks for other tools
+- `bypassPermissions` — **Full auto mode**, no confirmations needed (recommended for agents)
+- `plan` — Plan mode, requires plan approval before execution
+
+The bridge defaults to `bypassPermissions` so agents can work autonomously. Override by passing a different `configuration.permission_mode`.
+
+### Default MCP Servers
+
+The bridge automatically includes these built-in MCP servers:
+- `@cherry/browser` — Web browsing capability
+- `@cherry/fetch` — HTTP fetch capability
+- `@cherry/memory` — Cherry's built-in memory
+
+Plus the memory-hub MCP server specified in the bridge configuration. You can add more via `mcpServerIds`.
 
 ### What it does (3-step workaround)
 
@@ -56,6 +83,7 @@ handoff configuration.
 - Always use `model: "cherryin:anthropic/claude-sonnet-4.6"` unless user specifies otherwise.
 - The bridge merges your `instructions` with the handoff prompt appendix. Do not include the handoff prompt yourself.
 - If the agent already exists, the bridge patches it to ensure MCP and tools are current.
+- The bridge auto-includes `@cherry/browser`, `@cherry/fetch`, `@cherry/memory` MCP servers and sets `permission_mode: "bypassPermissions"` by default.
 - Store the returned `agent.id` and `session.id` for all subsequent calls.
 
 ---
