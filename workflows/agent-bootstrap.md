@@ -35,7 +35,45 @@ curl -s --noproxy '*' -X POST http://127.0.0.1:23333/v1/agents \
   -d '{"name": "Cherry Studio Dev Agent", "model": "cherryin:anthropic/claude-sonnet-4.6"}'
 ```
 
-### Step 3: Record the IDs in memory file
+### Step 3: Inject memory prompt into agent
+
+Read the prompt template from `templates/cherry-agent-prompt.md`, replace `{{AGENT_ID}}` and `{{SESSION_ID}}` with actual values, then PATCH to the agent:
+
+```bash
+# Generate the prompt with actual IDs filled in
+# (Read templates/cherry-agent-prompt.md, extract the template block, replace placeholders)
+
+# PATCH the instructions to the agent
+python3 -c "
+import json, subprocess, re
+
+# Read template
+with open('$HOME/.claude/skills/cherry-memory-bridge/templates/cherry-agent-prompt.md') as f:
+    content = f.read()
+
+# Extract template block between the first pair of triple backticks
+match = re.search(r'\`\`\`\n(.*?)\n\`\`\`', content, re.DOTALL)
+prompt = match.group(1) if match else content
+
+# Replace placeholders
+prompt = prompt.replace('{{AGENT_ID}}', '<AGENT_ID>')
+prompt = prompt.replace('{{SESSION_ID}}', '<SESSION_ID>')
+
+# PATCH to Cherry API
+payload = json.dumps({'instructions': prompt})
+with open('/tmp/agent-patch.json', 'w') as f:
+    f.write(payload)
+"
+
+curl -s --noproxy '*' -X PATCH 'http://127.0.0.1:23333/v1/agents/<AGENT_ID>' \
+  -H "Authorization: Bearer cs-sk-f995f423-d32a-455e-b49f-66f288f60b12" \
+  -H "Content-Type: application/json" \
+  -d @/tmp/agent-patch.json | jq '{id: .id, instructions_length: (.instructions | length)}'
+```
+
+This ensures the agent always gets the latest prompt from the skill template, not a hardcoded version.
+
+### Step 4: Record the IDs in memory file
 
 ```bash
 ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
